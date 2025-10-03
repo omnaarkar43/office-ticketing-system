@@ -1,0 +1,683 @@
+import React, { useState, useEffect } from 'react';
+import { Camera, X, Send, FileText, Clock, CheckCircle, AlertCircle, Settings, LogOut, Users, BarChart3 } from 'lucide-react';
+
+const API_URL = import.meta.env.VITE_API_URL || '/api';
+
+export default function TicketingSystem() {
+  const [currentView, setCurrentView] = useState('login');
+  const [user, setUser] = useState(null);
+  const [token, setToken] = useState(localStorage.getItem('token'));
+  const [tickets, setTickets] = useState([]);
+  const [selectedTicket, setSelectedTicket] = useState(null);
+  const [stats, setStats] = useState(null);
+  const [filters, setFilters] = useState({});
+
+  // Form state
+  const [formData, setFormData] = useState({
+    employee_name: '',
+    employee_email: '',
+    department: '',
+    location: '',
+    category: '',
+    sub_category: '',
+    description: ''
+  });
+  const [attachments, setAttachments] = useState([]);
+  const [loginForm, setLoginForm] = useState({ email: '', password: '' });
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState({ type: '', text: '' });
+
+  // Dropdown options
+  const departments = ['Foundation', 'Family office', 'Eithrconsulting', 'Accounts', 'Others', "CEO's office", "Founder's office"];
+  const locations = ['Bandra', 'Thane', 'Pune', 'Velhe', 'Devrukh', 'Others'];
+  const categories = {
+    'Laptop': ['Unable to start', 'Hangs', 'Stuck at screen', 'Mic not working', 'Speaker not working', 'Camera not working'],
+    'Anti-virus': ['Renewal'],
+    'Emails': ['Signature issue', 'Not receiving', 'Unable to send'],
+    'Outlook': ['Signature', 'Not receiving', 'Unable to send', 'Stuck'],
+    'Wi-Fi issue': ['Not working', 'Unable to connect', 'Internet down'],
+    'Video conferencing': ['Mic not working', 'Speaker not working', 'App crashing'],
+    'Zoom': ['App crashing', 'Mic issue', 'Camera issue', 'Speaker issue'],
+    'Google Meet': ['App crashing', 'Mic issue', 'Camera issue', 'Speaker issue'],
+    'Teams': ['App crashing', 'Mic issue', 'Camera issue', 'Speaker issue'],
+    'Backup': ['Data backup needed', 'Access to backup required'],
+    'Firewall': ['Blocking websites'],
+    'License upgrade': ['MS Office', 'Antivirus', 'Zoom'],
+    'Word/Excel/PowerPoint not working': ['Unable to save data'],
+    'Printer': ['Error', 'Offline', 'Not printing', 'Scanner not working', 'Pages stuck']
+  };
+
+  useEffect(() => {
+    if (token) {
+      verifyToken();
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (user && (currentView === 'dashboard' || currentView === 'tickets')) {
+      fetchTickets();
+      if (user.role === 'admin' || user.role === 'it') {
+        fetchStats();
+      }
+    }
+  }, [user, currentView, filters]);
+
+  const verifyToken = async () => {
+    try {
+      const response = await fetch(`${API_URL}/tickets`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const userData = JSON.parse(atob(token.split('.')[1]));
+        setUser(userData);
+        setCurrentView('dashboard');
+      } else {
+        localStorage.removeItem('token');
+        setToken(null);
+      }
+    } catch (error) {
+      localStorage.removeItem('token');
+      setToken(null);
+    }
+  };
+
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setMessage({ type: '', text: '' });
+
+    try {
+      const response = await fetch(`${API_URL}/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(loginForm)
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setToken(data.token);
+        setUser(data.user);
+        localStorage.setItem('token', data.token);
+        setCurrentView('dashboard');
+        setMessage({ type: 'success', text: 'Login successful!' });
+      } else {
+        setMessage({ type: 'error', text: data.error || 'Login failed' });
+      }
+    } catch (error) {
+      setMessage({ type: 'error', text: 'Network error. Please try again.' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    setToken(null);
+    setUser(null);
+    setCurrentView('login');
+  };
+
+  const handleSubmitTicket = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setMessage({ type: '', text: '' });
+
+    const formDataToSend = new FormData();
+    Object.keys(formData).forEach(key => {
+      formDataToSend.append(key, formData[key]);
+    });
+    attachments.forEach(file => {
+      formDataToSend.append('attachments', file);
+    });
+
+    try {
+      const response = await fetch(`${API_URL}/tickets`, {
+        method: 'POST',
+        body: formDataToSend
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setMessage({ type: 'success', text: `Ticket created successfully! Ticket No: ${data.ticketNo}` });
+        setFormData({
+          employee_name: '',
+          employee_email: '',
+          department: '',
+          location: '',
+          category: '',
+          sub_category: '',
+          description: ''
+        });
+        setAttachments([]);
+      } else {
+        setMessage({ type: 'error', text: data.error || 'Failed to create ticket' });
+      }
+    } catch (error) {
+      setMessage({ type: 'error', text: 'Network error. Please try again.' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchTickets = async () => {
+    try {
+      const queryParams = new URLSearchParams(filters).toString();
+      const response = await fetch(`${API_URL}/tickets${queryParams ? '?' + queryParams : ''}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setTickets(data);
+      }
+    } catch (error) {
+      console.error('Error fetching tickets:', error);
+    }
+  };
+
+  const fetchStats = async () => {
+    try {
+      const response = await fetch(`${API_URL}/dashboard/stats`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setStats(data);
+      }
+    } catch (error) {
+      console.error('Error fetching stats:', error);
+    }
+  };
+
+  const updateTicketStatus = async (ticketNo, status, comment = '') => {
+    try {
+      const response = await fetch(`${API_URL}/tickets/${ticketNo}/status`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ status, comment })
+      });
+
+      if (response.ok) {
+        setMessage({ type: 'success', text: 'Ticket status updated!' });
+        fetchTickets();
+        if (selectedTicket) {
+          fetchTicketDetails(ticketNo);
+        }
+      } else {
+        const data = await response.json();
+        setMessage({ type: 'error', text: data.error || 'Failed to update ticket' });
+      }
+    } catch (error) {
+      setMessage({ type: 'error', text: 'Network error. Please try again.' });
+    }
+  };
+
+  const fetchTicketDetails = async (ticketNo) => {
+    try {
+      const response = await fetch(`${API_URL}/tickets/${ticketNo}`);
+      if (response.ok) {
+        const data = await response.json();
+        setSelectedTicket(data);
+      }
+    } catch (error) {
+      console.error('Error fetching ticket details:', error);
+    }
+  };
+
+  const handleFileChange = (e) => {
+    const files = Array.from(e.target.files).slice(0, 3);
+    setAttachments(files);
+  };
+
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'Open': return 'bg-blue-100 text-blue-800';
+      case 'Work In Progress': return 'bg-yellow-100 text-yellow-800';
+      case 'Resolved': return 'bg-green-100 text-green-800';
+      case 'Closed': return 'bg-gray-100 text-gray-800';
+      case 'Reopened': return 'bg-orange-100 text-orange-800';
+      default: return 'bg-gray-100 text-gray-800';
+    }
+  };
+
+  // Login View
+  if (currentView === 'login') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8">
+          <div className="text-center mb-8">
+            <div className="bg-indigo-600 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+              <FileText className="text-white" size={32} />
+            </div>
+            <h1 className="text-3xl font-bold text-gray-800">Office Ticketing</h1>
+            <p className="text-gray-600 mt-2">Manage your IT support tickets</p>
+          </div>
+
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
+              <input
+                type="email"
+                value={loginForm.email}
+                onChange={(e) => setLoginForm({ ...loginForm, email: e.target.value })}
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                placeholder="admin@office.com"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
+              <input
+                type="password"
+                value={loginForm.password}
+                onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                placeholder="••••••••"
+                required
+              />
+            </div>
+            {message.text && (
+              <div className={`p-3 rounded-lg ${message.type === 'error' ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
+                {message.text}
+              </div>
+            )}
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full bg-indigo-600 text-white py-3 rounded-lg hover:bg-indigo-700 transition disabled:opacity-50 font-semibold"
+            >
+              {loading ? 'Logging in...' : 'Login'}
+            </button>
+          </form>
+
+          <div className="mt-6 text-center">
+            <button
+              onClick={() => setCurrentView('create')}
+              className="text-indigo-600 hover:text-indigo-700 font-medium"
+            >
+              Create New Ticket (No Login Required)
+            </button>
+          </div>
+
+          <div className="mt-4 text-xs text-gray-500 text-center">
+            Default admin: admin@office.com / admin123
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Create Ticket View (Public)
+  if (currentView === 'create') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+        <div className="max-w-3xl mx-auto">
+          <div className="bg-white rounded-2xl shadow-2xl p-8">
+            <div className="flex justify-between items-center mb-8">
+              <div>
+                <h1 className="text-3xl font-bold text-gray-800">Create Support Ticket</h1>
+                <p className="text-gray-600 mt-2">Submit your IT support request</p>
+              </div>
+              <button
+                onClick={() => setCurrentView('login')}
+                className="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300"
+              >
+                Staff Login
+              </button>
+            </div>
+
+            {message.text && (
+              <div className={`mb-6 p-4 rounded-lg ${message.type === 'error' ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
+                {message.text}
+              </div>
+            )}
+
+            <form onSubmit={handleSubmitTicket} className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Your Name *</label>
+                  <input
+                    type="text"
+                    value={formData.employee_name}
+                    onChange={(e) => setFormData({ ...formData, employee_name: e.target.value })}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Email *</label>
+                  <input
+                    type="email"
+                    value={formData.employee_email}
+                    onChange={(e) => setFormData({ ...formData, employee_email: e.target.value })}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Department *</label>
+                  <select
+                    value={formData.department}
+                    onChange={(e) => setFormData({ ...formData, department: e.target.value })}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                    required
+                  >
+                    <option value="">Select Department</option>
+                    {departments.map(dept => (
+                      <option key={dept} value={dept}>{dept}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Location *</label>
+                  <select
+                    value={formData.location}
+                    onChange={(e) => setFormData({ ...formData, location: e.target.value })}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                    required
+                  >
+                    <option value="">Select Location</option>
+                    {locations.map(loc => (
+                      <option key={loc} value={loc}>{loc}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Issue Category *</label>
+                  <select
+                    value={formData.category}
+                    onChange={(e) => {
+                      setFormData({ ...formData, category: e.target.value, sub_category: '' });
+                    }}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                    required
+                  >
+                    <option value="">Select Category</option>
+                    {Object.keys(categories).map(cat => (
+                      <option key={cat} value={cat}>{cat}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Sub-Category</label>
+                  <select
+                    value={formData.sub_category}
+                    onChange={(e) => setFormData({ ...formData, sub_category: e.target.value })}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                    disabled={!formData.category}
+                  >
+                    <option value="">Select Sub-Category</option>
+                    {formData.category && categories[formData.category]?.map(sub => (
+                      <option key={sub} value={sub}>{sub}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Description *</label>
+                <textarea
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  rows={4}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                  placeholder="Please describe your issue in detail..."
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Attachments (Max 3 files)
+                </label>
+                <input
+                  type="file"
+                  onChange={handleFileChange}
+                  multiple
+                  accept="image/*,.pdf,.doc,.docx,.txt"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                />
+                {attachments.length > 0 && (
+                  <div className="mt-2 text-sm text-gray-600">
+                    {attachments.length} file(s) selected
+                  </div>
+                )}
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full bg-indigo-600 text-white py-4 rounded-lg hover:bg-indigo-700 transition disabled:opacity-50 font-semibold text-lg flex items-center justify-center gap-2"
+              >
+                <Send size={20} />
+                {loading ? 'Submitting...' : 'Submit Ticket'}
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Dashboard View (Logged In)
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <div className="bg-white shadow-sm border-b">
+        <div className="max-w-7xl mx-auto px-4 py-4">
+          <div className="flex justify-between items-center">
+            <div className="flex items-center gap-3">
+              <div className="bg-indigo-600 w-10 h-10 rounded-lg flex items-center justify-center">
+                <FileText className="text-white" size={20} />
+              </div>
+              <div>
+                <h1 className="text-xl font-bold text-gray-800">Office Ticketing System</h1>
+                <p className="text-sm text-gray-600">Welcome, {user?.name}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-4">
+              <button
+                onClick={() => setCurrentView('dashboard')}
+                className={`px-4 py-2 rounded-lg ${currentView === 'dashboard' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}`}
+              >
+                <BarChart3 size={20} />
+              </button>
+              <button
+                onClick={() => setCurrentView('tickets')}
+                className={`px-4 py-2 rounded-lg ${currentView === 'tickets' ? 'bg-indigo-100 text-indigo-700' : 'text-gray-600 hover:bg-gray-100'}`}
+              >
+                <FileText size={20} />
+              </button>
+              <button
+                onClick={handleLogout}
+                className="px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg"
+              >
+                <LogOut size={20} />
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="max-w-7xl mx-auto px-4 py-8">
+        {currentView === 'dashboard' && stats && (
+          <div>
+            <h2 className="text-2xl font-bold text-gray-800 mb-6">Dashboard</h2>
+            
+            {/* Stats Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+              <div className="bg-white p-6 rounded-xl shadow-sm border">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-gray-600">Total Tickets</p>
+                    <p className="text-3xl font-bold text-gray-800 mt-1">{stats.total}</p>
+                  </div>
+                  <FileText className="text-indigo-600" size={32} />
+                </div>
+              </div>
+              {stats.byStatus?.map(item => (
+                <div key={item.status} className="bg-white p-6 rounded-xl shadow-sm border">
+                  <div>
+                    <p className="text-sm text-gray-600">{item.status}</p>
+                    <p className="text-3xl font-bold text-gray-800 mt-1">{item.count}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Recent Tickets */}
+            <div className="bg-white rounded-xl shadow-sm border p-6">
+              <h3 className="text-lg font-bold text-gray-800 mb-4">Recent Tickets</h3>
+              <div className="space-y-3">
+                {stats.recentTickets?.map(ticket => (
+                  <div
+                    key={ticket.ticket_no}
+                    className="flex items-center justify-between p-4 bg-gray-50 rounded-lg hover:bg-gray-100 cursor-pointer"
+                    onClick={() => {
+                      fetchTicketDetails(ticket.ticket_no);
+                      setCurrentView('tickets');
+                    }}
+                  >
+                    <div className="flex-1">
+                      <p className="font-semibold text-gray-800">{ticket.ticket_no}</p>
+                      <p className="text-sm text-gray-600">{ticket.category} - {ticket.employee_name}</p>
+                    </div>
+                    <span className={`px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(ticket.status)}`}>
+                      {ticket.status}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {currentView === 'tickets' && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Tickets List */}
+            <div className="lg:col-span-2">
+              <div className="bg-white rounded-xl shadow-sm border p-6">
+                <h2 className="text-xl font-bold text-gray-800 mb-4">All Tickets</h2>
+                
+                {/* Filters */}
+                <div className="flex gap-3 mb-6">
+                  <select
+                    onChange={(e) => setFilters({ ...filters, status: e.target.value || undefined })}
+                    className="px-3 py-2 border rounded-lg text-sm"
+                  >
+                    <option value="">All Status</option>
+                    <option value="Open">Open</option>
+                    <option value="Work In Progress">WIP</option>
+                    <option value="Resolved">Resolved</option>
+                    <option value="Closed">Closed</option>
+                  </select>
+                  <select
+                    onChange={(e) => setFilters({ ...filters, department: e.target.value || undefined })}
+                    className="px-3 py-2 border rounded-lg text-sm"
+                  >
+                    <option value="">All Departments</option>
+                    {departments.map(dept => (
+                      <option key={dept} value={dept}>{dept}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-3 max-h-[600px] overflow-y-auto">
+                  {tickets.map(ticket => (
+                    <div
+                      key={ticket.ticket_no}
+                      className={`p-4 border rounded-lg hover:bg-gray-50 cursor-pointer ${
+                        selectedTicket?.ticket_no === ticket.ticket_no ? 'border-indigo-500 bg-indigo-50' : ''
+                      }`}
+                      onClick={() => fetchTicketDetails(ticket.ticket_no)}
+                    >
+                      <div className="flex justify-between items-start mb-2">
+                        <div>
+                          <p className="font-semibold text-gray-800">{ticket.ticket_no}</p>
+                          <p className="text-sm text-gray-600">{ticket.employee_name}</p>
+                        </div>
+                        <span className={`px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(ticket.status)}`}>
+                          {ticket.status}
+                        </span>
+                      </div>
+                      <p className="text-sm text-gray-700 mb-2">{ticket.category}</p>
+                      <p className="text-xs text-gray-500">{ticket.department} • {ticket.location}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Ticket Details */}
+            {selectedTicket && (
+              <div className="bg-white rounded-xl shadow-sm border p-6">
+                <h3 className="text-lg font-bold text-gray-800 mb-4">Ticket Details</h3>
+                
+                <div className="space-y-4">
+                  <div>
+                    <p className="text-sm text-gray-600">Ticket No</p>
+                    <p className="font-semibold">{selectedTicket.ticket_no}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-600">Status</p>
+                    <span className={`inline-block px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(selectedTicket.status)}`}>
+                      {selectedTicket.status}
+                    </span>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-600">Employee</p>
+                    <p className="font-medium">{selectedTicket.employee_name}</p>
+                    <p className="text-sm text-gray-500">{selectedTicket.employee_email}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-600">Department & Location</p>
+                    <p className="font-medium">{selectedTicket.department}</p>
+                    <p className="text-sm text-gray-500">{selectedTicket.location}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-600">Issue</p>
+                    <p className="font-medium">{selectedTicket.category}</p>
+                    {selectedTicket.sub_category && (
+                      <p className="text-sm text-gray-500">{selectedTicket.sub_category}</p>
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-600">Description</p>
+                    <p className="text-sm">{selectedTicket.description}</p>
+                  </div>
+
+                  {(user.role === 'admin' || user.role === 'it') && (
+                    <div className="pt-4 border-t space-y-3">
+                      <button
+                        onClick={() => updateTicketStatus(selectedTicket.ticket_no, 'Work In Progress')}
+                        className="w-full px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700"
+                      >
+                        Mark as WIP
+                      </button>
+                      <button
+                        onClick={() => updateTicketStatus(selectedTicket.ticket_no, 'Resolved')}
+                        className="w-full px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                      >
+                        Mark as Resolved
+                      </button>
+                      <button
+                        onClick={() => updateTicketStatus(selectedTicket.ticket_no, 'Closed')}
+                        className="w-full px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
+                      >
+                        Close Ticket
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
